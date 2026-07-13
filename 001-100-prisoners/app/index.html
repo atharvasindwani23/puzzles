@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Follow the Trail</title>
+<style>
+  :root {
+    --ink: #e9edf2; --dim: #7f8aa3;
+    --line: #232a3d;
+    --start: #f4c95d; --path: #5ec8c0; --found: #e86a6a;
+    --card: #161b2b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; color: var(--ink);
+    font-family: ui-monospace, "SF Mono", "Courier New", monospace;
+    padding: 40px 20px; text-align: center;
+    background-color: #0d1120;
+    background-image: radial-gradient(var(--line) 1.4px, transparent 1.4px);
+    background-size: 26px 26px;
+    background-position: 0 0;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+  h1 { font-size: 17px; font-weight: 600; letter-spacing: 3px; margin: 0 0 6px; color: var(--dim); text-transform: uppercase; }
+  .tag { color: var(--dim); font-size: 13px; margin: 0 0 34px; letter-spacing: .5px; }
+
+  .bar { display: flex; gap: 14px; justify-content: center; align-items: center; flex-wrap: wrap; margin-bottom: 34px; }
+  button, select {
+    font-family: inherit; font-size: 13px; letter-spacing: 1px;
+    background: transparent; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 0;
+    padding: 10px 16px; cursor: pointer; transition: border-color .15s, color .15s;
+  }
+  button:hover { border-color: var(--path); color: var(--path); }
+  select { color: var(--start); }
+
+  .meta { display: flex; justify-content: center; gap: 26px; margin-bottom: 30px; font-size: 12px; color: var(--dim); letter-spacing: 1px; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .meta .hit { color: var(--found); }
+
+  .cols { display: flex; gap: 48px; justify-content: center; align-items: flex-start; flex-wrap: wrap; }
+  .col { flex: 1 1 340px; max-width: 400px; }
+  .label { font-size: 11px; letter-spacing: 2px; color: var(--dim); margin: 0 0 18px; text-transform: uppercase; }
+
+  .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 18px; }
+  .chest {
+    aspect-ratio: 1/1; border: 1px solid var(--line); background: var(--card); cursor: pointer;
+    position: relative; padding: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 600; color: var(--dim); transition: transform .1s, border-color .15s;
+  }
+  .chest:hover { transform: translateY(-2px); }
+  .chest .num { position: absolute; top: 4px; left: 5px; font-size: 9px; color: var(--dim); font-weight: 400; }
+  .chest.open  { background: transparent; border-color: var(--path); color: var(--path); }
+  .chest.start { background: transparent; border-color: var(--start); color: var(--start); }
+  .chest.found { border-color: var(--found); color: var(--found); animation: flash .4s; }
+  .chest.next  { border-color: var(--found); animation: pulse 1.1s infinite; }
+  @keyframes flash { 0%{transform:scale(1)} 50%{transform:scale(1.12)} 100%{transform:scale(1)} }
+  @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(232,106,106,0)} 50%{box-shadow:0 0 0 3px rgba(232,106,106,.4)} }
+
+  canvas { display:block; width: 100%; height: auto; }
+
+  .say { margin-top: 30px; font-size: 13px; color: var(--dim); letter-spacing: .5px; min-height: 18px; }
+  .say.win  { color: var(--path); }
+  .say.lose { color: var(--found); }
+  .say b { color: var(--ink); font-weight: 600; }
+  .trail { margin-top: 10px; font-size: 12px; color: var(--line); letter-spacing: 1px; min-height: 14px; }
+  .trail.on { color: var(--dim); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Follow the Trail</h1>
+  <p class="tag">each box points to the next · the trail always loops home · that loop is a cycle</p>
+
+  <div class="bar">
+    <button id="auto">auto</button>
+    <button id="shuffle">shuffle</button>
+    <select id="prisoner"></select>
+  </div>
+
+  <div class="meta">
+    <span>seeking <b id="goal">3</b></span>
+    <span><b id="opens">0</b> / <span id="klabel">5</span> digs</span>
+    <span>survival <b id="odds">–</b></span>
+  </div>
+
+  <div class="cols">
+    <div class="col">
+      <p class="label">boxes</p>
+      <div class="grid" id="grid"></div>
+    </div>
+    <div class="col">
+      <p class="label">cycle</p>
+      <canvas id="cyc" width="400" height="400"></canvas>
+    </div>
+  </div>
+
+  <div class="say" id="say"></div>
+  <div class="trail" id="trail"></div>
+</div>
+
+<script>
+const N = 10, K = N / 2;
+let boxes = [], me = 0, cur = null, steps = 0, done = false, timer = null, visited = [];
+let flowRAF = null, flowT = 0;
+
+const grid = document.getElementById('grid');
+const say = document.getElementById('say');
+const trail = document.getElementById('trail');
+const sel = document.getElementById('prisoner');
+const cv = document.getElementById('cyc'), ctx = cv.getContext('2d');
+document.getElementById('klabel').textContent = K;
+
+(() => { let t = 0; for (let L = K + 1; L <= N; L++) t += 1 / L;
+  document.getElementById('odds').textContent = `${Math.round((1 - t) * 100)}%`; })();
+
+function shuffle() {
+  boxes = [...Array(N).keys()];
+  for (let i = N - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [boxes[i], boxes[j]] = [boxes[j], boxes[i]]; }
+}
+function buildSelect() {
+  sel.innerHTML = '';
+  for (let i = 0; i < N; i++) { const o = document.createElement('option'); o.value = i; o.textContent = 'me = ' + (i + 1); sel.appendChild(o); }
+  sel.value = me;
+}
+function buildGrid() {
+  grid.innerHTML = '';
+  for (let i = 0; i < N; i++) {
+    const b = document.createElement('button');
+    b.className = 'chest'; b.dataset.i = i;
+    b.innerHTML = `<span class="num">${i + 1}</span>?`;
+    b.addEventListener('click', () => onClick(i));
+    grid.appendChild(b);
+  }
+  markNext();
+}
+const el = i => grid.children[i];
+function nextAllowed() { if (done) return null; return cur === null ? me : boxes[cur]; }
+function markNext() {
+  [...grid.children].forEach(c => c.classList.remove('next'));
+  const nx = nextAllowed(); if (nx !== null) el(nx).classList.add('next');
+}
+function updateOpens() { document.getElementById('opens').textContent = steps; }
+
+function nodePos(i) { const a = -Math.PI/2 + 2*Math.PI*i/N; return { x: 200 + 150*Math.cos(a), y: 200 + 150*Math.sin(a) }; }
+function drawCycle() {
+  ctx.clearRect(0, 0, 400, 400);
+  for (let i = 0; i < N; i++) {
+    const p = nodePos(i);
+    ctx.beginPath(); ctx.arc(p.x, p.y, 14, 0, 7);
+    ctx.strokeStyle = '#232a3d'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#4a5578'; ctx.font = '12px ui-monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(i + 1, p.x, p.y);
+  }
+  for (let s = 0; s < visited.length; s++) {
+    const from = visited[s], to = boxes[from];
+    if ((s + 1 < visited.length) || done) arrow(nodePos(from), nodePos(to));
+  }
+  visited.forEach((v, s) => drawNode(v));
+  if (done && visited.length) { const last = boxes[visited[visited.length - 1]]; if (last === me) drawNode(me, true); }
+  drawFlow();
+}
+// a glowing dot that travels start -> end along the completed loop
+function drawFlow() {
+  if (flowT <= 0 || !visited.length) return;
+  const seg = visited.length;                 // number of hops (last hop closes the loop)
+  const pos = (flowT % 1) * seg;              // 0..seg
+  const s = Math.floor(pos), f = pos - s;
+  const from = nodePos(visited[s]);
+  const toIdx = (s + 1 < visited.length) ? visited[s + 1] : me; // closing hop returns to start
+  const to = nodePos(toIdx);
+  const x = from.x + (to.x - from.x) * f, y = from.y + (to.y - from.y) * f;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, 14);
+  g.addColorStop(0, 'rgba(255,255,255,0.95)');
+  g.addColorStop(0.4, 'rgba(94,200,192,0.7)');
+  g.addColorStop(1, 'rgba(94,200,192,0)');
+  ctx.beginPath(); ctx.arc(x, y, 14, 0, 7); ctx.fillStyle = g; ctx.fill();
+}
+function startFlow() {
+  cancelAnimationFrame(flowRAF); flowT = 0;
+  const step = () => { flowT += 0.012; drawCycle(); flowRAF = requestAnimationFrame(step); };
+  flowRAF = requestAnimationFrame(step);
+}
+function stopFlow() { cancelAnimationFrame(flowRAF); flowRAF = null; flowT = 0; }
+function drawNode(i, found) {
+  const p = nodePos(i);
+  const col = found ? '#e86a6a' : (i === me ? '#f4c95d' : '#5ec8c0');
+  ctx.beginPath(); ctx.arc(p.x, p.y, 15, 0, 7);
+  ctx.fillStyle = '#0d1120'; ctx.fill(); ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = col; ctx.font = 'bold 13px ui-monospace'; ctx.fillText(i + 1, p.x, p.y);
+}
+function arrow(a, b) {
+  const ang = Math.atan2(b.y - a.y, b.x - a.x);
+  const sx = a.x + 15*Math.cos(ang), sy = a.y + 15*Math.sin(ang);
+  const ex = b.x - 18*Math.cos(ang), ey = b.y - 18*Math.sin(ang);
+  ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey);
+  ctx.strokeStyle = '#5ec8c0'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ex, ey);
+  ctx.lineTo(ex - 8*Math.cos(ang - .4), ey - 8*Math.sin(ang - .4));
+  ctx.lineTo(ex - 8*Math.cos(ang + .4), ey - 8*Math.sin(ang + .4));
+  ctx.closePath(); ctx.fillStyle = '#5ec8c0'; ctx.fill();
+}
+
+function reset() {
+  cur = null; steps = 0; done = false; visited = []; stopFlow();
+  buildGrid(); updateOpens(); drawCycle();
+  document.getElementById('goal').textContent = me + 1;
+  say.className = 'say'; say.innerHTML = 'open the pulsing box to begin';
+  trail.className = 'trail'; trail.textContent = '';
+}
+function onClick(i) {
+  const ok = nextAllowed(); if (ok === null) return;
+  if (i !== ok) { say.innerHTML = `the trail points to <b>${ok + 1}</b>`; return; }
+  openBox(i);
+}
+function openBox(i) {
+  const c = el(i); c.classList.remove('next');
+  const inside = boxes[i]; steps++; updateOpens(); visited.push(i);
+  if (inside === me) {
+    c.className = 'chest found'; c.innerHTML = `<span class="num">${i + 1}</span>${me + 1}`;
+    done = true; markNext(); drawCycle(); startFlow();
+    say.className = 'say win'; say.innerHTML = `looped home in <b>${steps}</b> · ${steps} ≤ ${K}, you're free`;
+    showTrail('↩'); return;
+  }
+  c.className = (cur === null) ? 'chest start' : 'chest open';
+  c.innerHTML = `<span class="num">${i + 1}</span>${inside + 1}`;
+  cur = i; drawCycle();
+  if (steps >= K) {
+    done = true; markNext(); drawCycle();
+    say.className = 'say lose'; say.innerHTML = `out of digs · this cycle is longer than ${K}`;
+    showTrail('…'); return;
+  }
+  markNext();
+  say.className = 'say'; say.innerHTML = `box ${i + 1} holds <b>${inside + 1}</b> → next`;
+  showTrail('');
+}
+function showTrail(end) { trail.className = 'trail on'; trail.textContent = visited.map(x => x + 1).join(' → ') + (end ? ' ' + end : ''); }
+
+function autoDig() {
+  if (timer) return;
+  const tick = () => { const nx = nextAllowed(); if (nx === null) { clearInterval(timer); timer = null; return; } openBox(nx); if (done) { clearInterval(timer); timer = null; } };
+  timer = setInterval(tick, 750); tick();
+}
+document.getElementById('shuffle').onclick = () => { if (timer){clearInterval(timer);timer=null;} shuffle(); reset(); };
+document.getElementById('auto').onclick = autoDig;
+sel.onchange = e => { if (timer){clearInterval(timer);timer=null;} me = +e.target.value; reset(); };
+
+shuffle(); buildSelect(); reset();
+</script>
+</body>
+</html>
