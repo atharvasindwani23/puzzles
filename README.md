@@ -1,6 +1,6 @@
 # 🧩 Puzzles
 
-Interesting math + coding puzzles, worked through the old-fashioned way: state the problem, share the real thought process behind the solution, verify it in code, and — where it helps — build something interactive so you can *feel* the idea instead of just reading it.
+Interesting math + coding puzzles, tried my best to explain them via diagrams and some static sites :D
 
 Each puzzle lives in its own numbered folder with a self-contained write-up. Start at any folder's `README.md`: you'll find the question first, then the reasoning that cracks it.
 
